@@ -7,3 +7,9 @@ __pycache__/
 
 # Logs
 *.log
+
+# Fichiers de sauvegarde
+*.old
+*.old2
+*.old3
+*.ol
