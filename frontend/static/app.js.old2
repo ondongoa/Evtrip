@@ -1,0 +1,174 @@
+// =====================
+// VARIABLES GLOBALES
+// =====================
+let map;
+let routeLayer;
+let chargerMarkers = [];
+let vehicleSelector;
+let themeToggle;
+
+// =====================
+// INIT MAP
+// =====================
+function initMap() {
+    map = L.map("map").setView([46.5, 3], 6);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19
+    }).addTo(map);
+}
+
+// =====================
+// VEHICLES
+// =====================
+async function loadVehicles() {
+    const res = await fetch("/api/vehicles");
+    const vehicles = await res.json();
+
+    vehicleSelector.innerHTML = "";
+
+    if (vehicles.length === 0) {
+        const opt = document.createElement("option");
+        opt.textContent = "Aucun véhicule disponible";
+        vehicleSelector.appendChild(opt);
+        return;
+    }
+
+    vehicles.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        opt.textContent = `${v.make} ${v.model}`;
+        vehicleSelector.appendChild(opt);
+    });
+
+    loadVehicleDetails(vehicles[0].id);
+}
+
+async function loadVehicleDetails(id) {
+    const res = await fetch(`/api/vehicle/${id}`);
+    const data = await res.json();
+
+    document.getElementById("vehicleDetails").classList.remove("hidden");
+
+    document.getElementById("vehImage").src = data.media.image.url;
+    document.getElementById("vehName").textContent =
+        `${data.naming.make} ${data.naming.model}`;
+    document.getElementById("vehVersion").textContent =
+        data.naming.chargetrip_version || "";
+
+    const specs = document.getElementById("vehSpecs");
+    specs.innerHTML = `
+        <li><b>Batterie :</b> ${data.battery.usable_kwh} kWh</li>
+        <li><b>Autonomie :</b> ${data.range.chargetrip_range.worst} – ${data.range.chargetrip_range.best} km</li>
+        <li><b>Accélération :</b> ${data.performance.acceleration || "-"}</li>
+        <li><b>Vitesse max :</b> ${data.performance.top_speed || "-"}</li>
+        <li><b>Connecteur :</b> ${data.connectors[0].standard}</li>
+        <li><b>Charge rapide :</b> ${data.routing.fast_charging_support ? "Oui" : "Non"}</li>
+    `;
+}
+
+// =====================
+// ROUTE & CHARGERS
+// =====================
+function clearChargers() {
+    chargerMarkers.forEach(m => map.removeLayer(m));
+    chargerMarkers = [];
+}
+
+function drawRoute(coords) {
+    if (routeLayer) map.removeLayer(routeLayer);
+
+    routeLayer = L.polyline(coords, {
+        color: "blue",
+        weight: 5
+    }).addTo(map);
+
+    map.fitBounds(routeLayer.getBounds());
+}
+
+function showChargers(stops) {
+    clearChargers();
+
+    stops.forEach(stop => {
+        const marker = L.marker([stop.lat, stop.lon]).addTo(map);
+
+        marker.bindPopup(`
+            <b>${stop.name || "Borne"}</b><br>
+            Recharge estimée : ${stop.expected_charge_min} min<br>
+            <button
+                onclick="addVia(${stop.lat}, ${stop.lon})"
+                class="mt-2 px-2 py-1 bg-blue-600 text-white rounded">
+                Ajouter au trajet
+            </button>
+        `);
+
+        chargerMarkers.push(marker);
+    });
+}
+
+// =====================
+// RECALCUL VIA BORNE
+// =====================
+async function addVia(lat, lon) {
+    const body = {
+        from: document.getElementById("from").value,
+        to: document.getElementById("to").value,
+        via: [lat, lon],
+        vehicle_id: vehicleSelector.value
+    };
+
+    const res = await fetch("/api/plan_via", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    drawRoute(data.coords);
+}
+
+// =====================
+// FORM SUBMIT
+// =====================
+document.addEventListener("DOMContentLoaded", () => {
+    initMap();
+
+    vehicleSelector = document.getElementById("vehicle");
+    themeToggle = document.getElementById("themeToggle");
+
+    loadVehicles();
+
+    vehicleSelector.addEventListener("change", () => {
+        loadVehicleDetails(vehicleSelector.value);
+    });
+
+    themeToggle.addEventListener("click", () => {
+        document.getElementById("root").classList.toggle("dark");
+    });
+
+    document.getElementById("tripForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        document.getElementById("loader").classList.remove("hidden");
+
+        const body = {
+            from: document.getElementById("from").value,
+            to: document.getElementById("to").value,
+            vehicle_id: vehicleSelector.value,
+            mode: document.getElementById("routeMode").value
+        };
+
+        const res = await fetch("/api/plan", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+
+        document.getElementById("loader").classList.add("hidden");
+
+        drawRoute(data.coords);
+        showChargers(data.stops);
+    });
+});

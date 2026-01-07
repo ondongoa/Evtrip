@@ -1,0 +1,70 @@
+from .geocoding import geocode
+from .routing_client import route_between, distance_between_points
+from .charger_client import nearby_chargers
+from .vehicles_gql import fetch_vehicle_details
+
+AVG_SPEED = 90
+
+def compute_score(distance_km, time_h, stops, mode):
+    if mode == "fastest":
+        return time_h
+    if mode == "eco":
+        return distance_km
+    if mode == "safe":
+        return time_h - len(stops) * 0.3
+
+def compute_stops(coords, vehicle):
+    autonomy = vehicle["range"]["chargetrip_range"]["best"]
+    stops = []
+    dist = 0
+
+    last = coords[0]
+    for p in coords[1:]:
+        dist += distance_between_points(last, p)
+        last = p
+
+        if dist >= autonomy * 0.9:
+            chargers = nearby_chargers(p[0], p[1])
+            if chargers:
+                c = chargers[0]
+                stops.append({
+                    "lat": c["lat"],
+                    "lon": c["lon"],
+                    "name": c["name"],
+                    "expected_charge_min": 30
+                })
+                dist = 0
+    return stops
+
+def plan_trip(from_address, to_address, vehicle_id, mode):
+    start = geocode(from_address)
+    end = geocode(to_address)
+    vehicle = fetch_vehicle_details(vehicle_id)
+
+    route = route_between(start, end)
+    stops = compute_stops(route["coords"], vehicle)
+
+    drive_time = route["distance_km"] / AVG_SPEED
+    charge_time = sum(s["expected_charge_min"] for s in stops) / 60
+
+    return {
+        "coords": route["coords"],
+        "distance_km": route["distance_km"],
+        "drive_time_h": drive_time,
+        "charge_time_h": charge_time,
+        "total_time_h": drive_time + charge_time,
+        "stops": stops,
+        "score": compute_score(route["distance_km"], drive_time + charge_time, stops, mode)
+    }
+
+def plan_trip_via(from_address, to_address, via, vehicle_id):
+    start = geocode(from_address)
+    end = geocode(to_address)
+    via = tuple(via)
+
+    r1 = route_between(start, via)
+    r2 = route_between(via, end)
+
+    return {
+        "coords": r1["coords"] + r2["coords"]
+    }

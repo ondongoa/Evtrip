@@ -1,0 +1,32 @@
+import requests
+
+BASE = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/bornes-irve/records"
+
+
+def nearby_chargers(lat, lon, radius=20000, rows=5):
+    params = {
+        "dataset": "bornes-irve",
+        "q": "",
+        "geofilter.distance": f"{lat},{lon},{radius}",
+        "rows": rows
+    }
+
+    r = requests.get(BASE, params=params, timeout=10)
+    r.raise_for_status()
+
+    data = r.json()
+    results = []
+
+    for rec in data.get("records", []):
+        fields = rec.get("fields", {})
+        geo = fields.get("geo_point_2d") or [None, None]
+
+        results.append({
+            "name": fields.get("adresse"),
+            "lat": geo[0],
+            "lon": geo[1],
+            "power_kW": fields.get("puissance_nominale"),
+            "operator": fields.get("operateur")
+        })
+
+    return results

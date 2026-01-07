@@ -1,0 +1,9 @@
+# Ignorer l'environnement virtuel
+venv_tp/
+
+# Fichiers compilés
+*.pyc
+__pycache__/
+
+# Logs
+*.log
