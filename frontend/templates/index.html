@@ -1,165 +1,99 @@
-let map;
-let routeLayer;
-let chargerMarkers = [];
-let vehicleSelector;
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <title>EVTrip Planner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-function initMap() {
-    map = L.map("map").setView([46.5, 3], 6);
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19
-    }).addTo(map);
-}
+    <style>
+        #map { height: 500px; }
+    </style>
+</head>
 
-function clearChargers() {
-    chargerMarkers.forEach(m => map.removeLayer(m));
-    chargerMarkers = [];
-}
+<body class="bg-gray-100 text-gray-900">
 
-function drawRoute(coords) {
-    if (routeLayer) map.removeLayer(routeLayer);
+<header class="bg-white shadow p-6">
+    <h1 class="text-3xl font-bold text-blue-600 flex items-center gap-2">
+        <i data-lucide="zap"></i>
+        EVTrip Planner
+    </h1>
+</header>
 
-    routeLayer = L.polyline(coords, {
-        color: "#2563eb",
-        weight: 5
-    }).addTo(map);
+<main class="p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-    map.fitBounds(routeLayer.getBounds());
-}
+<!-- COLONNE GAUCHE -->
+<section class="bg-white p-6 rounded-2xl shadow">
+    <h2 class="text-xl font-semibold mb-4">Paramètres du trajet</h2>
 
-function showChargers(stops) {
-    clearChargers();
+    <form id="tripForm" class="space-y-4">
+        <input id="from" placeholder="Départ (ville ou adresse)"
+            class="w-full p-3 rounded border" />
 
-    stops.forEach(stop => {
-        const marker = L.marker([stop.lat, stop.lon]).addTo(map);
+        <input id="to" placeholder="Arrivée (ville ou adresse)"
+            class="w-full p-3 rounded border" />
 
-        marker.bindPopup(`
-            <b>${stop.name}</b><br>
-            Puissance : ${stop.power_kW || "?"} kW<br>
-            Recharge estimée : ${stop.expected_charge_min} min<br>
-            <button onclick="addVia(${stop.lat}, ${stop.lon})" class="mt-2 px-3 py-1 bg-blue-600 text-white rounded">
-                Ajouter au trajet
-            </button>
-        `);
+        <select id="vehicle" class="w-full p-3 rounded border"></select>
 
-        chargerMarkers.push(marker);
-    });
-}
+        <select id="routeMode" class="w-full p-3 rounded border">
+            <option value="eco">Économique</option>
+            <option value="normal">Normal</option>
+            <option value="fast">Rapide</option>
+            <option value="safe">Sécurisé</option>
+        </select>
 
-async function addVia(lat, lon) {
-    const body = {
-        from: document.getElementById("from").value,
-        to: document.getElementById("to").value,
-        via: [lat, lon],
-        vehicle_id: vehicleSelector.value
-    };
+        <button type="submit"
+            class="w-full bg-blue-600 text-white p-3 rounded-xl font-semibold">
+            Calculer le trajet
+        </button>
+    </form>
 
-    const res = await fetch("/api/plan_via", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(body)
-    });
+    <div id="loader" class="hidden mt-4 text-sm">
+        Calcul en cours…
+    </div>
 
-    const data = await res.json();
-    drawRoute(data.coords);
-}
+    <!-- ✅ DÉTAILS DU VÉHICULE -->
+    <div id="vehicleDetails"
+         class="mt-6 bg-gray-50 rounded-xl p-4 border hidden">
 
-document.addEventListener("DOMContentLoaded", () => {
-    initMap();
+        <h3 class="text-xl font-semibold mb-3">
+            Véhicule sélectionné
+        </h3>
 
-    vehicleSelector = document.getElementById("vehicle");
+        <img id="vehImage" class="w-full rounded-xl shadow mb-3"/>
 
-    // 🔹 Ajouter écouteur changement véhicule
-    vehicleSelector.addEventListener("change", (e) => {
-        loadVehicleDetails(e.target.value);
-    });
+        <p id="vehName" class="text-lg font-bold"></p>
+        <p id="vehVersion" class="text-sm text-gray-600 mb-2"></p>
 
-    // Charger la liste des véhicules
-    fetch("/api/vehicles")
-        .then(r => r.json())
-        .then(vehicles => {
-            vehicles.forEach(v => {
-                const opt = document.createElement("option");
-                opt.value = v.id;
-                opt.textContent = `${v.make} ${v.model}`;
-                vehicleSelector.appendChild(opt);
-            });
-        });
+        <ul class="text-sm" id="vehSpecs"></ul>
+    </div>
 
-    document.getElementById("tripForm").addEventListener("submit", async (e) => {
-        e.preventDefault();
+    <!-- DÉTAILS DU TRAJET -->
+    <div class="mt-6 bg-gray-50 p-4 rounded-xl">
+        <h3 class="font-semibold mb-2">Détails du trajet</h3>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+            <div>Distance : <b><span id="distance">–</span> km</b></div>
+            <div>Conduite : <b><span id="drive">–</span> h</b></div>
+            <div>Recharge : <b><span id="charge">–</span> h</b></div>
+            <div>Arrêts : <b><span id="stops">–</span></b></div>
+            <div>Mode : <b><span id="mode">–</span></b></div>
+        </div>
+    </div>
+</section>
 
-        document.getElementById("loader").classList.remove("hidden");
+<!-- COLONNE DROITE -->
+<section class="lg:col-span-2 bg-white p-4 rounded-2xl shadow">
+    <h2 class="text-xl font-semibold mb-3">Carte du trajet</h2>
+    <div id="map" class="rounded-xl"></div>
+</section>
 
-        const body = {
-            from: document.getElementById("from").value,
-            to: document.getElementById("to").value,
-            vehicle_id: vehicleSelector.value,
-            mode: document.getElementById("routeMode").value
-        };
+</main>
 
-        const res = await fetch("/api/plan", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(body)
-        });
-
-        const data = await res.json();
-
-        document.getElementById("loader").classList.add("hidden");
-
-        drawRoute(data.coords);
-        showChargers(data.stops);
-
-        document.getElementById("distance").textContent = data.distance_km;
-        document.getElementById("drive").textContent = data.drive_time_h;
-        document.getElementById("charge").textContent = data.charge_time_h;
-        document.getElementById("stops").textContent = data.nb_stops;
-        document.getElementById("mode").textContent = data.mode;
-    });
-});
-
-// 🔹 Fonction ajoutée : charger détails véhicule
-async function loadVehicleDetails(id) {
-    if (!id) return;
-
-    try {
-        const res = await fetch(`/api/vehicle/${id}`);
-        const data = await res.json();
-
-        const box = document.getElementById("vehicleDetails");
-        if (!box) return;
-
-        box.classList.remove("hidden");
-
-        const img = document.getElementById("vehImage");
-        if (data.media && data.media.image && data.media.image.url) {
-            img.src = data.media.image.url;
-            img.style.display = "block";
-        } else {
-            img.style.display = "none";
-        }
-
-        document.getElementById("vehName").textContent =
-            (data.naming?.make || "") + " " + (data.naming?.model || "");
-
-        document.getElementById("vehVersion").textContent =
-            data.naming?.chargetrip_version || "";
-
-        document.getElementById("vehSpecs").innerHTML = `
-            <li><b>Batterie utilisable :</b> ${data.battery?.usable_kwh ?? "-"} kWh</li>
-            <li><b>Autonomie (réelle) :</b>
-                ${data.range?.chargetrip_range?.worst ?? "-"} –
-                ${data.range?.chargetrip_range?.best ?? "-"} km
-            </li>
-            <li><b>Accélération :</b> ${data.performance?.acceleration ?? "-"} s</li>
-            <li><b>Vitesse max :</b> ${data.performance?.top_speed ?? "-"} km/h</li>
-            <li><b>Connecteur :</b> ${data.connectors?.[0]?.standard ?? "-"}</li>
-            <li><b>Charge rapide :</b>
-                ${data.routing?.fast_charging_support ? "Oui" : "Non"}
-            </li>
-        `;
-    } catch (e) {
-        console.error("Erreur loadVehicleDetails", e);
-    }
-}
+<script src="/static/app.js"></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>
